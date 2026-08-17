@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ご予約フォーム</title>
+<style>
+  body {
+    font-family: -apple-system, "Hiragino Sans", sans-serif;
+    padding: 20px; max-width: 480px; margin: 0 auto;
+    color: #3D3230; background: #FBF7F4;
+  }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  .lead { font-size: 13px; color: #8A7A72; margin: 0 0 20px; }
+  .note {
+    background: #FFF6E5; border-left: 4px solid #C9A227;
+    padding: 10px 12px; font-size: 13px; border-radius: 4px; margin-bottom: 18px;
+  }
+  .sect {
+    font-size: 12px; font-weight: bold; color: #C9A227;
+    border-bottom: 1px solid #E8DFD8; padding-bottom: 5px;
+    margin: 28px 0 4px; letter-spacing: .04em;
+  }
+  label { display: block; font-weight: bold; margin: 16px 0 6px; font-size: 14px; }
+  .req { color: #d33; font-size: 11px; font-weight: normal; margin-left: 5px; }
+  .opt { color: #A99; font-size: 11px; font-weight: normal; margin-left: 5px; }
+  .hint { display: block; font-size: 12px; color: #8A7A72; font-weight: normal; margin-top: 3px; }
+  input, select, textarea {
+    width: 100%; padding: 11px; font-size: 16px;
+    box-sizing: border-box; border: 1px solid #DDD3CC;
+    border-radius: 6px; background: #fff;
+  }
+  .hidden { display: none; }
+  button {
+    width: 100%; padding: 15px; font-size: 16px; font-weight: bold;
+    background: #06c755; color: #fff; border: none; border-radius: 8px;
+    margin-top: 28px; cursor: pointer;
+  }
+  button:disabled { background: #bbb; }
+  #status { margin-top: 14px; text-align: center; font-size: 14px; min-height: 20px; }
+  #status.error { color: #d33; font-weight: bold; }
+  #status.done { color: #06c755; font-weight: bold; }
+  #loading, #expired { text-align: center; padding: 50px 20px; color: #8A7A72; }
+  #expired h1 { color: #d33; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 14px;
+    border: 3px solid #E8DFD8; border-top-color: #C9A227;
+    border-radius: 50%; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!--
+  これは全店舗・全環境で共有する「ガワ」です。中に固有の情報は持ちません。
+
+  どのApps Scriptに送るかは、LINEが発行するリンクの ?g= で指定されます。
+      https://（このページ）/?g=（Apps ScriptのURL）&t=（専用トークン）
+
+  そのため、このファイルが公開されても漏れる情報はありません。
+  店舗を増やすときも、このファイルを増やす必要はありません。
+-->
+<script>
+  var DEFAULT_GAS_URL = '';
+</script>
+
+<div id="loading">
+  <div class="spinner"></div>
+  読み込んでいます…
+</div>
+
+<div id="expired" class="hidden">
+  <h1>リンクの有効期限が切れています</h1>
+  <p>お手数ですが、LINEのトーク画面下部にある<br><strong>「ご予約はこちら」</strong>をもう一度タップしてください。</p>
+</div>
+
+<div id="main" class="hidden">
+  <h1>ご予約フォーム</h1>
+  <p class="lead">ご相談いただいた内容をもとに、下記をご入力ください。</p>
+  <div id="busyNote" class="note hidden"></div>
+
+  <form id="reserveForm">
+    <label>受付タイプ<span class="req">必須</span></label>
+    <select id="channel" required>
+      <option value="">選択してください</option>
+      <option value="store">店頭でお受け取り</option>
+      <option value="shipping">ご住所へ発送</option>
+    </select>
+
+    <div id="shippingFields" class="hidden">
+      <div class="sect">お届け先</div>
+      <label>郵便番号<span class="req">必須</span>
+        <span class="hint">7桁を入力すると住所が自動で入ります</span>
+      </label>
+      <input type="text" id="postalCode" inputmode="numeric" placeholder="150-0001">
+      <label>都道府県<span class="req">必須</span></label>
+      <select id="prefecture"><option value="">選択してください</option></select>
+      <label>市区町村<span class="req">必須</span></label>
+      <input type="text" id="city" placeholder="渋谷区神宮前">
+      <label>番地<span class="req">必須</span></label>
+      <input type="text" id="address1" placeholder="1-2-3">
+      <label>建物名・部屋番号<span class="opt">任意</span></label>
+      <input type="text" id="building" placeholder="○○マンション101">
+      <label>お届け先のお名前<span class="req">必須</span></label>
+      <input type="text" id="recipientName" placeholder="山田 花子">
+    </div>
+
+    <div id="dateBlock" class="hidden">
+      <div class="sect">ご希望日時</div>
+      <label id="dateLabel">ご希望日<span class="req">必須</span></label>
+      <input type="date" id="arrivalDate">
+      <label id="timeLabel">ご希望時間<span class="req">必須</span></label>
+      <select id="timeSlot"><option value="">選択してください</option></select>
+    </div>
+
+    <div id="baseBlock" class="hidden">
+      <div class="sect">ご注文者さま</div>
+      <label>お名前<span class="req">必須</span></label>
+      <input type="text" id="customerName">
+      <label>お電話番号<span class="req">必須</span>
+        <span class="hint">当日ご連絡する場合がございます</span>
+      </label>
+      <input type="tel" id="phone" inputmode="tel" placeholder="09012345678">
+    </div>
+
+    <div id="dynamicFields" class="hidden">
+      <div class="sect">ご注文内容</div>
+      <div id="dynamicHost"></div>
+    </div>
+
+    <button type="submit" id="submitBtn">この内容で予約を確定する</button>
+    <div id="status"></div>
+  </form>
+</div>
+
+<script>
+(function () {
+  var el = function (id) { return document.getElementById(id); };
+  var q = function (k) {
+    var m = location.search.match(new RegExp('[?&]' + k + '=([^&]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  };
+  var TOKEN = q('t');
+  var DATA = null;
+
+  // 送信先のApps Script。リンクの ?g= で指定される（無ければ既定値）
+  // 安全のため、Apps Script以外のURLは受け付けない
+  var GAS_URL = q('g') || DEFAULT_GAS_URL;
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(GAS_URL)) {
+    document.getElementById('loading').innerHTML =
+      'リンクが正しくありません。<br>お手数ですが、LINEのメニューからもう一度お開きください。';
+    return;
+  }
+
+  function show(id) {
+    ['loading', 'expired', 'main'].forEach(function (x) {
+      el(x).classList.toggle('hidden', x !== id);
+    });
+  }
+
+  if (!TOKEN) { show('expired'); return; }
+
+  // ---- 設定の読み込み（JSONP：ブラウザの制限を受けない方式） ----
+  window.__cfg = function (res) {
+    if (!res || !res.ok) {
+      show('expired');
+      return;
+    }
+    DATA = res.config;
+    buildForm();
+    show('main');
+  };
+
+  var s = document.createElement('script');
+  s.src = GAS_URL + '?api=config&callback=__cfg&t=' + encodeURIComponent(TOKEN);
+  s.onerror = function () {
+    el('loading').innerHTML = '読み込みに失敗しました。<br>通信環境を確認して、画面を更新してください。';
+  };
+  document.body.appendChild(s);
+
+  // ---- フォームの組み立て ----
+  function buildForm() {
+    var statusEl = el('status');
+    var submitBtn = el('submitBtn');
+    var dateInput = el('arrivalDate');
+
+    function setStatus(msg, cls) { statusEl.textContent = msg; statusEl.className = cls || ''; }
+
+    function fillSelect(select, list) {
+      (list || []).forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v; o.textContent = v;
+        select.appendChild(o);
+      });
+    }
+
+    fillSelect(el('prefecture'), Object.keys(DATA.deliveryDays || {}));
+
+    if (DATA.busyNote) {
+      var bn = el('busyNote');
+      bn.textContent = 'ただいま' + DATA.busyNote + 'のため、通常よりお日にちをいただいております。';
+      bn.classList.remove('hidden');
+    }
+
+    var host = el('dynamicHost');
+    (DATA.fields || []).forEach(function (f) {
+      var wrap = document.createElement('div');
+      wrap.setAttribute('data-show', f.showWhen);
+
+      var lab = document.createElement('label');
+      lab.innerHTML = f.label +
+        '<span class="' + (f.required ? 'req' : 'opt') + '">' + (f.required ? '必須' : '任意') + '</span>' +
+        (f.hint ? '<span class="hint">' + f.hint + '</span>' : '');
+      wrap.appendChild(lab);
+
+      var input;
+      if (f.type === 'プルダウン') {
+        input = document.createElement('select');
+        var o = document.createElement('option');
+        o.value = ''; o.textContent = '選択してください';
+        input.appendChild(o);
+        fillSelect(input, f.choices);
+      } else if (f.type === '長い文章') {
+        input = document.createElement('textarea');
+        input.rows = 3;
+      } else {
+        input = document.createElement('input');
+        input.type = f.type === '数字' ? 'number'
+          : f.type === '電話番号' ? 'tel'
+          : f.type === '日付' ? 'date' : 'text';
+      }
+      input.id = f.key;
+      wrap.appendChild(input);
+      host.appendChild(wrap);
+    });
+
+    function applyFieldVisibility(channel) {
+      var nodes = host.querySelectorAll('[data-show]');
+      for (var i = 0; i < nodes.length; i++) {
+        var cond = nodes[i].getAttribute('data-show');
+        var vis = cond === '共通' ||
+          (cond === '発送のみ' && channel === 'shipping') ||
+          (cond === '店頭のみ' && channel === 'store');
+        nodes[i].classList.toggle('hidden', !vis);
+      }
+    }
+
+    function currentMinDate() {
+      if (el('channel').value === 'shipping') {
+        var pref = el('prefecture').value;
+        return pref ? DATA.minDateByPref[pref] : '';
+      }
+      return DATA.minDateStore;
+    }
+
+    function refreshDateLimit() {
+      var min = currentMinDate();
+      var isShip = el('channel').value === 'shipping';
+      var pref = el('prefecture').value;
+
+      if (!min) {
+        dateInput.removeAttribute('min');
+        dateInput.disabled = true;
+        el('dateLabel').innerHTML = 'ご希望日<span class="req">必須</span>' +
+          '<span class="hint">先に都道府県をお選びください</span>';
+        return;
+      }
+      dateInput.disabled = false;
+      dateInput.min = min;
+
+      var hint = min + ' 以降でお選びいただけます';
+      if (isShip && pref) {
+        hint += '（' + pref + 'へは発送から' + DATA.deliveryDays[pref] + '日かかります）';
+      }
+      el('dateLabel').innerHTML = (isShip ? 'お届け希望日' : 'ご来店希望日') +
+        '<span class="req">必須</span><span class="hint">' + hint + '</span>';
+
+      if (dateInput.value && dateInput.value < min) {
+        dateInput.value = '';
+        setStatus('お届け先の地域に合わせて、日付を選び直してください。', 'error');
+      }
+    }
+
+    el('channel').addEventListener('change', function () {
+      var v = this.value, isShip = v === 'shipping';
+      el('shippingFields').classList.toggle('hidden', !isShip);
+      el('dateBlock').classList.toggle('hidden', !v);
+      el('baseBlock').classList.toggle('hidden', !v);
+      el('dynamicFields').classList.toggle('hidden', !v);
+
+      el('timeLabel').innerHTML = (isShip ? '配送時間帯' : 'ご来店時間') + '<span class="req">必須</span>';
+      var ts = el('timeSlot');
+      ts.innerHTML = '<option value="">選択してください</option>';
+      fillSelect(ts, isShip ? DATA.deliveryTimes : DATA.visitTimes);
+
+      applyFieldVisibility(v);
+      refreshDateLimit();
+    });
+
+    el('prefecture').addEventListener('change', refreshDateLimit);
+
+    dateInput.addEventListener('change', function () {
+      if (!this.value) return;
+      var min = currentMinDate();
+      if (DATA.closedDates.indexOf(this.value) >= 0) {
+        setStatus('その日は休業日のため、別の日をお選びください。', 'error');
+        this.value = '';
+      } else if (min && this.value < min) {
+        setStatus(min + ' 以降でお選びください。', 'error');
+        this.value = '';
+      } else { setStatus(''); }
+    });
+
+    el('postalCode').addEventListener('input', function () {
+      var z = this.value.replace(/[^0-9]/g, '');
+      if (z.length !== 7) return;
+      var sc = document.createElement('script');
+      sc.src = 'https://zipcloud.ibsnet.co.jp/api/search?zipcode=' + z + '&callback=zipCallback';
+      document.body.appendChild(sc);
+    });
+    window.zipCallback = function (res) {
+      if (!res || res.status !== 200 || !res.results) return;
+      var r = res.results[0];
+      el('prefecture').value = r.address1;
+      if (!el('city').value) el('city').value = r.address2 + r.address3;
+      refreshDateLimit();
+      el('address1').focus();
+    };
+
+    el('reserveForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+
+      var extra = [];
+      (DATA.fields || []).forEach(function (f) {
+        var node = el(f.key);
+        if (!node || node.parentNode.classList.contains('hidden')) return;
+        extra.push({ label: f.label, value: node.value.trim ? node.value.trim() : node.value });
+      });
+
+      var payload = {
+        token: TOKEN,
+        channel: el('channel').value,
+        arrivalDate: dateInput.value,
+        timeSlot: el('timeSlot').value,
+        postalCode: el('postalCode').value.trim(),
+        prefecture: el('prefecture').value,
+        city: el('city').value.trim(),
+        address1: el('address1').value.trim(),
+        building: el('building').value.trim(),
+        recipientName: el('recipientName').value.trim(),
+        customerName: el('customerName').value.trim(),
+        phone: el('phone').value.trim(),
+        extra: extra
+      };
+
+      submitBtn.disabled = true;
+      setStatus('送信中です…');
+
+      // Content-Type を text/plain にすることで、ブラウザの事前確認(preflight)を避ける
+      fetch(GAS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'reserve', payload: payload })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res && res.ok) {
+            setStatus('ご予約を受け付けました。この画面は閉じて大丈夫です。', 'done');
+            el('reserveForm').style.display = 'none';
+          } else {
+            setStatus((res && res.error) || '送信できませんでした。', 'error');
+            submitBtn.disabled = false;
+          }
+        })
+        .catch(function () {
+          setStatus('送信に失敗しました。通信環境を確認してもう一度お試しください。', 'error');
+          submitBtn.disabled = false;
+        });
+    });
+  }
+})();
+</script>
+</body>
+</html>
