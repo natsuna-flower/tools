@@ -42,6 +42,7 @@
   #status.error { color: #d33; font-weight: bold; }
   #status.done { color: #06c755; font-weight: bold; }
   #loading, #expired { text-align: center; padding: 50px 20px; color: #8A7A72; }
+  #loading .sub { font-size: 12px; margin-top: 10px; color: #A99; }
   #expired h1 { color: #d33; }
   .spinner {
     width: 28px; height: 28px; margin: 0 auto 14px;
@@ -69,6 +70,7 @@
 <div id="loading">
   <div class="spinner"></div>
   読み込んでいます…
+  <div class="sub" id="loadingSub">少々お待ちください</div>
 </div>
 
 <div id="expired" class="hidden">
@@ -162,8 +164,20 @@
 
   if (!TOKEN) { show('expired'); return; }
 
+  // 起動に数秒かかることがある（サーバー側の仕様）。フリーズと誤解されないよう、
+  // 時間が経ったら文言を切り替えて「動いている」ことを伝える
+  var loadingSub = el('loadingSub');
+  var loadingTimer1 = setTimeout(function () {
+    if (loadingSub) loadingSub.textContent = 'もうしばらくお待ちください（あと数秒です）';
+  }, 3000);
+  var loadingTimer2 = setTimeout(function () {
+    if (loadingSub) loadingSub.textContent = '通信状況により、少し長めにかかっています…';
+  }, 8000);
+
   // ---- 設定の読み込み（JSONP：ブラウザの制限を受けない方式） ----
   window.__cfg = function (res) {
+    clearTimeout(loadingTimer1);
+    clearTimeout(loadingTimer2);
     if (!res || !res.ok) {
       show('expired');
       return;
