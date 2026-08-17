@@ -26,12 +26,32 @@
   }
   #loginError { color: #d33; font-size: 13px; min-height: 18px; margin-top: 4px; }
 
-  /* 一覧 */
+  /* 読み込み中 */
+  .loadingRow {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    padding: 30px 0; color: #8A7A72; font-size: 14px;
+  }
+  .spinner {
+    width: 20px; height: 20px; border: 3px solid #E8DFD8; border-top-color: #C9A227;
+    border-radius: 50%; animation: spin .8s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 一覧まわり */
   .topBar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .refreshBtn { width: auto; padding: 8px 14px; font-size: 13px; }
+
+  .filterBar { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .filterRow { display: flex; gap: 6px; }
+  .filterRow button {
+    flex: 1; padding: 8px 4px; font-size: 12px; border: 1px solid #DDD3CC; border-radius: 6px;
+    background: #fff; color: #6b5f58; cursor: pointer;
+  }
+  .filterRow button.active { background: #3D3230; color: #fff; border-color: #3D3230; }
+
   #list { display: flex; flex-direction: column; gap: 12px; }
   .card {
-    background: #fff; border: 1px solid #E8DFD8; border-radius: 10px; padding: 14px;
+    background: #fff; border: 1px solid #E8DFD8; border-radius: 10px; padding: 14px; cursor: pointer;
   }
   .card .row1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
   .name { font-weight: bold; font-size: 15px; }
@@ -44,6 +64,13 @@
   .badge.キャンセル { background: #b33; }
   .meta { font-size: 13px; color: #6b5f58; line-height: 1.6; }
   .meta b { color: #3D3230; }
+  .expandHint { font-size: 11px; color: #A99; margin-top: 4px; }
+  .detail {
+    display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #E8DFD8;
+    font-size: 13px; color: #6b5f58; line-height: 1.7;
+  }
+  .detail b { color: #3D3230; }
+  .detail .row { margin-bottom: 2px; }
   .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .actions button {
     flex: 1; min-width: 100px; padding: 10px; font-size: 13px; font-weight: bold;
@@ -73,8 +100,24 @@
     <h1 style="margin:0">予約一覧</h1>
     <button class="refreshBtn" id="refreshBtn">更新</button>
   </div>
+
+  <div class="filterBar">
+    <div class="filterRow" id="channelFilter">
+      <button data-v="all" class="active">すべて</button>
+      <button data-v="store">店頭</button>
+      <button data-v="shipping">発送</button>
+    </div>
+    <div class="filterRow" id="sortFilter">
+      <button data-v="arrival" class="active">来店・到着日が近い順</button>
+      <button data-v="received">受付が新しい順</button>
+    </div>
+  </div>
+
+  <div id="loadingRow" class="loadingRow" style="display:none">
+    <div class="spinner"></div>読み込んでいます…
+  </div>
   <div id="list"></div>
-  <div id="empty" class="hidden" style="display:none">予約がありません</div>
+  <div id="empty" style="display:none">この条件の予約はありません</div>
   <div id="loadError" style="display:none"></div>
 </div>
 
@@ -93,6 +136,9 @@
   }
 
   var PW = sessionStorage.getItem('admin_pw') || '';
+  var RAW = [];
+  var channelMode = 'all';
+  var sortMode = 'arrival';
 
   function jsonp(params, cb) {
     var name = '__cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
@@ -131,8 +177,10 @@
     if (!pw) return;
     el('loginError').textContent = '';
     el('loginBtn').disabled = true;
+    el('loginBtn').textContent = '確認中…';
     jsonp({ api: 'admin_list', pw: pw }, function (res) {
       el('loginBtn').disabled = false;
+      el('loginBtn').textContent = '開く';
       if (!res.ok) {
         el('loginError').textContent = res.error || 'パスワードが違います。';
         return;
@@ -141,32 +189,84 @@
       sessionStorage.setItem('admin_pw', pw);
       el('loginBox').style.display = 'none';
       el('mainBox').style.display = 'block';
-      render(res.reservations);
+      RAW = res.reservations || [];
+      renderFiltered();
     });
   }
 
   el('refreshBtn').addEventListener('click', load);
 
   function load() {
+    setLoading(true);
     jsonp({ api: 'admin_list', pw: PW }, function (res) {
+      setLoading(false);
       if (!res.ok) {
         el('loginBox').style.display = 'block';
         el('mainBox').style.display = 'none';
         return;
       }
-      render(res.reservations);
+      RAW = res.reservations || [];
+      renderFiltered();
     });
+  }
+
+  function setLoading(on) {
+    el('loadingRow').style.display = on ? 'flex' : 'none';
+    if (on) { el('list').innerHTML = ''; el('empty').style.display = 'none'; }
   }
 
   // 既にパスワードを保持していれば、入力画面を飛ばして開く
   if (PW) {
+    el('loginBox').innerHTML = '<div class="loadingRow"><div class="spinner"></div>開いています…</div>';
     jsonp({ api: 'admin_list', pw: PW }, function (res) {
       if (res.ok) {
         el('loginBox').style.display = 'none';
         el('mainBox').style.display = 'block';
-        render(res.reservations);
+        RAW = res.reservations || [];
+        renderFiltered();
+      } else {
+        location.reload();
       }
     });
+  }
+
+  // フィルター・並び替えのボタン
+  function wireToggle(containerId, onChange) {
+    var container = el(containerId);
+    container.querySelectorAll('button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        container.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        onChange(btn.getAttribute('data-v'));
+      });
+    });
+  }
+  wireToggle('channelFilter', function (v) { channelMode = v; renderFiltered(); });
+  wireToggle('sortFilter', function (v) { sortMode = v; renderFiltered(); });
+
+  function renderFiltered() {
+    var list = RAW.slice();
+
+    if (channelMode !== 'all') {
+      var want = channelMode === 'store' ? '店頭' : '発送';
+      list = list.filter(function (r) { return r['受付タイプ'] === want; });
+    }
+
+    if (sortMode === 'arrival') {
+      list.sort(function (a, b) {
+        var da = a['到着・来店日'] || '9999-99-99';
+        var db = b['到着・来店日'] || '9999-99-99';
+        return da < db ? -1 : da > db ? 1 : 0;
+      });
+    } else {
+      list.sort(function (a, b) {
+        var da = a['受付日時'] || '';
+        var db = b['受付日時'] || '';
+        return da < db ? 1 : da > db ? -1 : 0;
+      });
+    }
+
+    render(list);
   }
 
   function statusClass(s) { return s === '確定' ? '確定' : (s === 'キャンセル' ? 'キャンセル' : 'pending'); }
@@ -182,6 +282,8 @@
 
       var status = r['ステータス'] || '受付';
       var payment = r['お支払い方法'] || r['支払方法'] || '';
+      var cardMsg = r['カードの文面'] || r['カード文面'] || '';
+      var isShip = r['受付タイプ'] === '発送';
 
       card.innerHTML =
         '<div class="row1">' +
@@ -193,6 +295,16 @@
           esc(r['花の種類'] || '') + (r['ご予算'] ? '（' + esc(r['ご予算']) + '）' : '') + '<br>' +
           '電話: ' + esc(r['電話番号'] || '') + (payment ? '　支払: ' + esc(payment) : '') +
           (r['メモ'] ? '<br>メモ: ' + esc(r['メモ']) : '') +
+        '</div>' +
+        '<div class="expandHint">タップで詳細</div>' +
+        '<div class="detail">' +
+          (isShip ? '<div class="row"><b>発送予定日:</b> ' + esc(r['発送日(自動計算)'] || '') + '</div>' : '') +
+          (isShip ? '<div class="row"><b>お届け先:</b> 〒' + esc(r['郵便番号'] || '') + ' ' + esc(r['都道府県'] || '') + esc(r['市区町村'] || '') + esc(r['番地'] || '') + (r['建物名・部屋番号'] ? ' ' + esc(r['建物名・部屋番号']) : '') + '</div>' : '') +
+          (isShip && r['お届け先お名前'] ? '<div class="row"><b>お届け先お名前:</b> ' + esc(r['お届け先お名前']) + '</div>' : '') +
+          '<div class="row"><b>メッセージカード:</b> ' + esc(r['メッセージカード'] || '') + '</div>' +
+          (cardMsg ? '<div class="row"><b>カードの文面:</b> ' + esc(cardMsg) + '</div>' : '') +
+          '<div class="row"><b>用途:</b> ' + esc(r['用途'] || '') + '</div>' +
+          '<div class="row"><b>受付日時:</b> ' + esc(r['受付日時'] || '') + '</div>' +
         '</div>' +
         '<div class="actions">' +
           '<button class="btnConfirm" data-act="confirm">確定にする</button>' +
@@ -206,15 +318,24 @@
       if (status === '確定') card.querySelector('.btnConfirm').disabled = true;
       if (status === 'キャンセル') { card.querySelector('.btnConfirm').disabled = true; card.querySelector('.btnCancel').disabled = true; }
 
-      card.querySelector('.btnConfirm').addEventListener('click', function () {
+      card.addEventListener('click', function (ev) {
+        if (ev.target.closest('button') || ev.target.closest('input') || ev.target.closest('label')) return;
+        var detail = card.querySelector('.detail');
+        detail.style.display = detail.style.display === 'block' ? 'none' : 'block';
+      });
+
+      card.querySelector('.btnConfirm').addEventListener('click', function (ev) {
+        ev.stopPropagation();
         setStatus(r.id, '確定', null, this);
       });
-      card.querySelector('.btnCancel').addEventListener('click', function () {
+      card.querySelector('.btnCancel').addEventListener('click', function (ev) {
+        ev.stopPropagation();
         var memo = prompt('キャンセルの理由・補足があれば入力してください（空欄でも送信できます）', '');
         if (memo === null) return; // キャンセル操作自体を取りやめ
         setStatus(r.id, 'キャンセル', memo, this);
       });
       card.querySelectorAll('input[type=checkbox]').forEach(function (chk) {
+        chk.addEventListener('click', function (ev) { ev.stopPropagation(); });
         chk.addEventListener('change', function () {
           var field = this.getAttribute('data-act');
           this.disabled = true;
